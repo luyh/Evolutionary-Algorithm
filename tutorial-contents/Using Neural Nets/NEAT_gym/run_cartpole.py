@@ -12,10 +12,14 @@ import visualize
 GAME = 'CartPole-v0'
 env = gym.make(GAME).unwrapped
 
+print("action space: {0!r}".format(env.action_space))
+print("observation space: {0!r}".format(env.observation_space))
+
 CONFIG = "./config"
-EP_STEP = 300           # maximum episode steps
+EP_STEP = 500           # maximum episode steps
 GENERATION_EP = 10      # evaluate by the minimum of 10-episode rewards
-TRAINING = False         # training or testing
+TRAINING = True         # training or testing
+winner = "winner-169.bin"
 CHECKPOINT = 9          # test on this checkpoint
 
 
@@ -30,15 +34,15 @@ def eval_genomes(genomes, config):
                 action_values = net.activate(observation)
                 action = np.argmax(action_values)
                 observation_, reward, done, _ = env.step(action)
-                accumulative_r += reward
+                accumulative_r +=  (4.8 - abs(observation_[0]) * reward)
                 if done:
                     break
                 observation = observation_
             ep_r.append(accumulative_r)
         genome.fitness = np.min(ep_r)/float(EP_STEP)    # depends on the minimum episode reward
 
-
-def run():
+import pickle
+def train():
     config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
                          neat.DefaultSpeciesSet, neat.DefaultStagnation, CONFIG)
     pop = neat.Population(config)
@@ -49,33 +53,57 @@ def run():
     pop.add_reporter(neat.StdOutReporter(True))
     pop.add_reporter(neat.Checkpointer(5))
 
-    pop.run(eval_genomes, 10)       # train 10 generations
+    winner = pop.run(eval_genomes, 10)       # train 10 generations
+
+    with open("winners/winner-{}.bin".format(winner.key), "wb") as f:
+        pickle.dump(winner, f, 2)
 
     # visualize training
     visualize.plot_stats(stats, ylog=False, view=True)
     visualize.plot_species(stats, view=True)
 
+    return winner
 
-def evaluation():
-    p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-%i' % CHECKPOINT)
-    winner = p.run(eval_genomes, 1)     # find the winner in restored population
+
+def evaluation(winner):
+
+    #p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-%i' % CHECKPOINT)
+    # winner = p.run(eval_genomes, 1)     # find the winner in restored population
+
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation, CONFIG)
+
+    if not TRAINING:
+        with open("winners/{}".format(winner), "rb") as f:
+            winner = pickle.load(f)
 
     # show winner net
     node_names = {-1: 'In0', -2: 'In1', -3: 'In3', -4: 'In4', 0: 'act1', 1: 'act2'}
-    visualize.draw_net(p.config, winner, True, node_names=node_names)
+    visualize.draw_net(config, winner, True, node_names=node_names)
 
-    net = neat.nn.FeedForwardNetwork.create(winner, p.config)
+    net = neat.nn.FeedForwardNetwork.create(winner, config)
+
     while True:
+        data = []
         s = env.reset()
-        while True:
+        for t in range(EP_STEP):
             env.render()
-            a = np.argmax(net.activate(s))
+            av = net.activate(s)
+            a = np.argmax(av)
             s, r, done, _ = env.step(a)
+            data.append(np.hstack((s, a, (4.8 - abs(s[0]) * r))))
             if done: break
+
+        data = np.array(data)
+        score = np.sum(data[:, -1]) / EP_STEP
+
+        print('score',score)
+        print('data', data)
 
 
 if __name__ == '__main__':
     if TRAINING:
-        run()
-    else:
-        evaluation()
+        print('TRAINING:')
+        winner = train()
+    print('evaluation:')
+    evaluation(winner)
